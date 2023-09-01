@@ -1,0 +1,13 @@
+#!/bin/bash
+
+WINDOWS=$(tmux list-windows -F '#W')
+for WINDOW in $WINDOWS; do
+    PANES=$(tmux list-panes -F '#P' -t $WINDOW)
+    for PANE in $PANES; do
+        printf -v joined '%s ' "$@"
+        tmux send-keys -t $WINDOW.$PANE -l "$joined"
+        tmux send-keys -t $WINDOW.$PANE "Enter"
+    done
+done
+
+

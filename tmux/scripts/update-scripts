@@ -1,0 +1,115 @@
+#!/usr/bin/python3
+
+import pathlib
+import json
+import argparse
+import subprocess
+import copy
+import sys
+import io
+
+CMD_START_IDX=100
+STATIC_ALIASES_FILE=pathlib.Path.home() / '.tmux/conf/aliases.json'
+SCRIPTS_DIR=pathlib.Path.home() / '.tmux/scripts'
+EXCLUDED_SCRIPTS=['update-scripts', 'run-all']
+RESET_ALIASES_CMD=['/usr/bin/tmux', 'set-option', '-s', '-u', 'command-alias']
+ALIASES_FILE=pathlib.Path.home() / '.tmux/conf/aliases.conf'
+
+class AliasStore:
+    ALIAS_FORMAT=['/usr/bin/tmux', 'set', '-s', 'command-alias[{idx}]', '{alias_name}={alias_command}']
+    ALIAS_READ_FORMAT='command-alias[{idx}] "{alias_name}={alias_command}"'
+
+    def __init__(self, start_idx):
+        self.aliases = {}
+        self.start_idx = start_idx
+
+    def String(self):
+        indexed_aliases = [(k,v) for k, v in self.aliases.items()]
+        return '\n'.join([AliasStore.ALIAS_READ_FORMAT.format(idx=self.start_idx + idx, alias_name=alias[0], alias_command=alias[1]) for idx, alias in enumerate(indexed_aliases)])
+
+    def load_dir(self, d):
+        if not d.is_dir():
+            return
+        for file in d.iterdir():
+            if file.is_file():
+                is_excluded = False
+                for s in EXCLUDED_SCRIPTS:
+                    if s in file.name:
+                        is_excluded = True
+                        break
+                if is_excluded:
+                    continue
+                if file.stat().st_mode & 1:
+                    self.aliases[file.name] = 'run "{}"'.format(str(file))
+
+    def update_aliases(self, dry_run, write):
+        indexed_aliases = [(k,v) for k,v in self.aliases.items()]
+        output = sys.stdout
+        if write:
+            output = open(ALIASES_FILE, 'w')
+        for idx, alias in enumerate(indexed_aliases):
+            cmd = copy.copy(AliasStore.ALIAS_FORMAT)
+            cmd[3] = cmd[3].format(idx=self.start_idx + idx)
+            cmd[4] = cmd[4].format(alias_name=alias[0], alias_command=alias[1])
+            if write or dry_run:
+                cmd[4] = "'" + cmd[4] + "'"
+                print(' '.join(cmd[1:]), file=output)
+            if not dry_run:
+                res = subprocess.run(cmd)
+                if res.returncode != 0:
+                    print("Error: running {} did not complete successfully".format(cmd), file=sys.stderr)
+        if write:
+            output.close()
+
+    @staticmethod
+    def FromJSONFile(filepath, start_idx):
+        newAS = AliasStore(start_idx)
+        with open(filepath, 'r') as f:
+            newAS.aliases = json.load(f)
+        return newAS
+        
+    @staticmethod
+    def FromAliasDict(aliases, start_idx):
+        newAS = AliasStore(start_idx)
+        newAS.aliases = aliases
+        return newAS
+
+def escape_inner_quotes(s):
+    first_quote = s.find('"')
+    last_quote = s.rfind('"')
+    if first_quote != -1 and last_quote != -1 and first_quote != last_quote:
+        ns = io.StringIO()
+        ns.write(s[:first_quote+1])
+        for c in s[first_quote+1:last_quote]:
+            if c == '"':
+                c = '\\"'
+            ns.write(c)
+        ns.write(s[last_quote:])
+        return ns.getvalue()
+    return s
+
+def get_args():
+    parser = argparse.ArgumentParser(prog='update-aliases', description='update tmux aliases')
+    parser.add_argument('-s', '--load-static-aliases', help='specify a json file from which to load static aliases', type=pathlib.Path, default=STATIC_ALIASES_FILE)
+    parser.add_argument('-d', '--dry-run', help='print the resulting command-aliases rather than loading them', action='store_true')
+    parser.add_argument('-i', '--command-index', help='specify a command-alias index to start at', type=int, default=CMD_START_IDX)
+    parser.add_argument('--dont-reset', help='do not reset the command aliases before updating', action='store_true')
+    parser.add_argument('-w', '--write', help='write aliases to ~/.tmux/conf/aliases.conf', action='store_true')
+    return parser.parse_args()
+    
+def main():
+    args = get_args()
+
+    static_json = args.load_static_aliases
+    cmd_idx = args.command_index
+
+    aliases = AliasStore.FromJSONFile(static_json, cmd_idx)
+    aliases.load_dir(SCRIPTS_DIR)
+
+    if not args.dont_reset and not args.dry_run and not args.write:
+        subprocess.run(RESET_ALIASES_CMD)
+    aliases.update_aliases(args.dry_run, args.write)
+
+
+if __name__ == "__main__":
+    main()

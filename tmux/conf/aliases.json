@@ -1,0 +1,5 @@
+{
+    "run-all": "command-prompt -p command \"run \\\"~/.tmux/scripts/run-all %%\\\"\"",
+    "set-bg-unfocused": "set -qg status-bg colour25",
+    "set-bg-focused": "set -qg status-bg default"
+}
